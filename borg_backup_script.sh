@@ -21,14 +21,13 @@
 ###############################
 # client config
 ###############################
-	USERNAME=""
+	USERNAME="" # username on the backup server
 	export BORG_PASSPHRASE='' # ADD HERE YOUR LONG PASSWORD
 
-	BORG_DOMAIN=""
+	BORG_DOMAIN="" # ip or domain of the backup server
 	BORG_PORT="22"
 
-	BORG_USER="" # needs an existing user at the server
-	BORG_REPO="/home/$BORG_USER/backups"
+	BORG_REPO="/home/$USERNAME/backups"
 
 	DEBUG="info" # possbile values: critical, error, warning, info, debug
 
@@ -50,20 +49,27 @@
 ###############################
 
 
-###############################
-# concatenate some strings
-###############################
-REPO="ssh://$BORG_USER@$BORG_DOMAIN:$BORG_PORT/$BORG_REPO"
+# make sure, password is ok (length check >= 25 chars)
+if [ ${#BORG_PASSPHRASE} -ge 24 ]; then
+	echo -n ""
+else
+	echo "Your password length is too short! Please enter a password >= 25 chars."; exit
+fi
 
-DATE_WITH_TIME=`date "+%Y-%m-%d_%H:%M"`
-BORG_BACKUP_NAME="$BORG_USER_$DATE_WITH_TIME"
+
+# concatenate some strings
+
+REPO="ssh://$USERNAME@$BORG_DOMAIN:$BORG_PORT/$BORG_REPO"
+
+TIMESTAMP=`date "+%Y-%m-%d_%H:%M"`
+BORG_BACKUP_NAME="$TIMESTAMP"
 
 
 
 backup_path=""
 # Loop through the array and build the include_path string
 for pattern in "${include_path[@]}"; do
-    backup_path+="'$pattern' "
+    backup_path+="$pattern "
 done
 
 
@@ -72,20 +78,6 @@ exclude_options=""
 for pattern in "${exclude_patterns[@]}"; do
     exclude_options+="--exclude '$pattern' "
 done
-
-your_command="borg create --$DEBUG -s --progress  --show-rc --verbose --compression lz4 $exclude_options $REPO::$BORG_BACKUP_NAME $backup_path"
-
-echo "$your_command"
-
-
-###############################
-# make sure, password is ok
-###############################
-if [ ${#BORG_PASSPHRASE} -ge 24 ]; then
-	echo -n ""
-else
-	echo "Your password length is too short! Please enter a password >= 25 chars."; exit
-fi
 
 
 
@@ -102,7 +94,9 @@ init() {
 
 backup() {
 	echo "[$DATE_WITH_TIME] creating backup"
-	borg create --$DEBUG -s --progress  --show-rc --verbose --compression lz4 --exclude-caches --exclude '/home/*/snap/steam/*' --exclude '/home/*/venv*' --exclude '/home/*/.local/lib/*' --exclude '/home/*/.local/share/nomic.ai/*' --exclude '/var/' --exclude '/root/.cache/*' --exclude '/home/*/.cache/*' --exclude '/home/*/.local/share/Steam/*' --exclude '/root/.local/share/Trash/*' --exclude '/home/*/.local/share/Trash/*' --exclude '/home/*/.steam/steam/config/htmlcache/*' --exclude '/home/user/Desktop/games/' --exclude '/home/user/Desktop/Programme/' $REPO::$BORG_BACKUP_NAME /home /root /etc /var/lib
+	echo $exclude_options
+	echo $backup_path
+	borg create --$DEBUG -s --progress  --show-rc --verbose --compression lz4 $exclude_options $REPO::$BORG_BACKUP_NAME $backup_path
 	echo "[$DATE_WITH_TIME] creating backup done. Exit_status: $?"
 	list
 	prune
