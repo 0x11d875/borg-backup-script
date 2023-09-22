@@ -94,8 +94,6 @@ init() {
 
 backup() {
 	echo "[$DATE_WITH_TIME] creating backup"
-	echo $exclude_options
-	echo $backup_path
 	borg create --$DEBUG -s --progress  --show-rc --verbose --compression lz4 $exclude_options $REPO::$BORG_BACKUP_NAME $backup_path
 	echo "[$DATE_WITH_TIME] creating backup done. Exit_status: $?"
 	list
