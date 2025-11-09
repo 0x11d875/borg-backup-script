@@ -9,11 +9,13 @@
 sudo apt install borgbackup fuse3 python3-pyfuse3
 
 vim /etc/borg-backup.conf; chmod 400 /etc/borg-backup.conf
+
 vim /opt/borg-backup.sh; chmod +x /opt/borg-backup.sh
 
 
 
 vim /etc/systemd/system/borg-backup.service
+
 vim /etc/systemd/system/borg-backup.timer
 
 
