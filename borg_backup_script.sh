@@ -1,145 +1,185 @@
-#!/bin/bash
-#
-# borg backup script
-# Version: 1.0.0
-# Author: 0x11d875
-# Description: A script to use borgbackup. After add all neede configs it can be used to create and backup your files with borgbackup
-# Date: September 9, 2023
-# License: MIT License
-# Repository: 
-#
-# How to use:
-# 1. Add all needed configs under client config
-# 2. Configure your server, create user, add ssh keys, create backup folder
-# 3. Run borg_backup_script.sh init, wait until its done and backup the printed informations for recovery
-# 4. run borg_backup_script.sh backup to run your first backup. 
-# 5. Add it to crontab, e.g. '0 * * * * sh /borg_backup_script.sh backup' to run it every hour
+#!/usr/bin/env bash
+set -uo pipefail
 
 
 
-
-###############################
-# client config
-###############################
-	USERNAME="" # username on the backup server
-	export BORG_PASSPHRASE='' # ADD HERE YOUR LONG PASSWORD
-
-	BORG_DOMAIN="" # ip or domain of the backup server
-	BORG_PORT="22"
-
-	BORG_REPO="/home/$USERNAME/backups"
-
-	DEBUG="info" # possbile values: critical, error, warning, info, debug
+# DO NOT implement here! gets overwrite in config!
+pre_backup() {
+  :
+}
+# DO NOT implement here! gets overwrite in config!
+post_backup() {
+  :
+}
 
 
-	# add all path you want to backup
-	include_path=(
-		'/home'
-		'/root'
-		'/etc'
-		)
+CONF="/etc/borg-backup.conf"
+[[ -r "$CONF" ]] || { echo "Config not found: $CONF" >&2; exit 2; }
 
-	# add paths that you dont want to backup
-	exclude_patterns=(
-	    '/home/*/cache/*'
-	    '/home/*/venv*'
-	)
-###############################
-# client config DONE
-###############################
+source "$CONF"
+
+now() { date '+%Y-%m-%d_%H:%M:%S'; }
+REPO="ssh://${USERNAME}@${BORG_DOMAIN}:${BORG_PORT}/${BORG_REPO_PATH}"
 
 
-# make sure, password is ok (length check >= 25 chars)
-if [ ${#BORG_PASSPHRASE} -ge 24 ]; then
-	echo -n ""
-else
-	echo "Your password length is too short! Please enter a password >= 25 chars."; exit
+
+EXCLUDE_OPTS=()
+if [[ -v EXCLUDE_PATTERNS ]]; then
+  for pat in "${EXCLUDE_PATTERNS[@]}"; do
+    [[ -n "$pat" ]] || continue
+    EXCLUDE_OPTS+=(--exclude "$pat")
+  done
 fi
 
 
-# concatenate some strings
 
-REPO="ssh://$USERNAME@$BORG_DOMAIN:$BORG_PORT/$BORG_REPO"
+require_cfg() {
+  local k
+  for k in USERNAME BORG_DOMAIN BORG_REPO_PATH; do
+    [[ -n "${!k:-}" ]] || { echo "Config error: $k empty" >&2; exit 2; }
+  done
 
-TIMESTAMP=`date "+%Y-%m-%d_%H:%M"`
-BORG_BACKUP_NAME="$TIMESTAMP"
+  # INCLUDE_PATHS must be set
+  if [[ ${INCLUDE_PATHS+x} != x ]]; then
+    echo "Config error: INCLUDE_PATHS not set" >&2
+    exit 2
+  fi
 
-
-
-backup_path=""
-# Loop through the array and build the include_path string
-for pattern in "${include_path[@]}"; do
-    backup_path+="$pattern "
-done
-
-
-exclude_options=""
-# Loop through the array and build the exclude_options string
-for pattern in "${exclude_patterns[@]}"; do
-    exclude_options+="--exclude '$pattern' "
-done
-
-
-
-
-
-init() {
-	echo "[$DATE_WITH_TIME] init"
-	borg --version
-	borg init --$DEBUG --encryption=repokey $REPO
-	echo "[$DATE_WITH_TIME] init done. Exit_status: $?"
-	borg key export --paper $REPO
-	info
-}
-
-backup() {
-	echo "[$DATE_WITH_TIME] creating backup"
-	borg create --$DEBUG -s --progress  --show-rc --verbose --compression lz4 $exclude_options $REPO::$BORG_BACKUP_NAME $backup_path
-	echo "[$DATE_WITH_TIME] creating backup done. Exit_status: $?"
-	list
-	prune
+  # and non-empty
+  if ((${#INCLUDE_PATHS[@]} == 0)); then
+    echo "Config error: INCLUDE_PATHS empty" >&2
+    exit 2
+  fi
 }
 
 
-prune() {
-	echo "[$DATE_WITH_TIME] pruening"
-	borg prune -v --list --stats --keep-minutely=60 --keep-hourly=48 --keep-daily=35 --keep-weekly=8 --keep-monthly=24 --keep-yearly=1024 $REPO
-	echo "[$DATE_WITH_TIME] prunening done. Exit_status: $?"
+
+ensure_repo() {
+  if ! borg list "--${BORG_LOGLEVEL}" "$REPO" >/dev/null 2>&1; then
+    echo "[$(now)] repo missing, init"
+    borg init "--${BORG_LOGLEVEL}" --encryption=repokey "$REPO"
+    borg key export --paper "$REPO" || true
+  fi
 }
 
 
-list() {
-	borg list --$DEBUG $REPO
-}
 
-info() {
-	borg info --$DEBUG $REPO
-}
-
-mount() {
-	echo "[$DATE_WITH_TIME] mouting backup"
-	mkdir -p /tmp/borg_mount
-	borg mount --$DEBUG $REPO /tmp/borg_mount
-	echo "[$DATE_WITH_TIME] mounting backup done. Exit_status: $?"
-}
-
-umount() {
-	echo "[$DATE_WITH_TIME] umount backup"
-	borg umount --$DEBUG /tmp/borg_mount
-	rmdir /tmp/borg_mount
+do_backup() {
+  echo "RUN: borg create username=${USERNAME},borg_domain=${BORG_DOMAIN},borg_port=${BORG_PORT},borg_repo=${BORG_REPO_PATH}"
+  pre_backup
+  require_cfg
+  ensure_repo
+  local archive; archive="$(date '+%Y-%m-%d_%H:%M:%S')"
+  local create_opts=( "--${BORG_LOGLEVEL}" -s --show-rc --verbose -C lz4 )
+  [[ "${PROGRESS}" == "yes" ]] && create_opts+=(--progress)
+  borg create --exclude-caches "${create_opts[@]}" "${EXCLUDE_OPTS[@]}" "${REPO}::${archive}" "${INCLUDE_PATHS[@]}";
+  prune
+  compact
+  yield_check
+  post_backup
+  echo "RUN: done"
 }
 
 
-diff() {
-	echo "[$DATE_WITH_TIME] diff:"
-	borg diff $REPO::$1 $2
+
+prune()  {
+  require_cfg
+  echo "RUN: borg prune"
+  borg prune -v --list --stats \
+    --keep-minutely="${KEEP_MINUTELY}" \
+    --keep-hourly="${KEEP_HOURLY}" \
+    --keep-daily="${KEEP_DAILY}" \
+    --keep-weekly="${KEEP_WEEKLY}" \
+    --keep-monthly="${KEEP_MONTHLY}" \
+    --keep-yearly="${KEEP_YEARLY}" \
+    "$REPO"
 }
 
 
-breaklock() {
-        echo "[$DATE_WITH_TIME] break-lock:"
-        borg break-lock $REPO
+
+compact()  {
+  require_cfg
+  echo "RUN: borg compact"
+  borg compact -v "$REPO"
 }
 
 
-$1 $2 $3 | tee -a backup.log
+
+yield_check() {
+  echo "RUN: borg yield_check"
+  require_cfg
+  # partial repo check (CRC only, resumes with --max-duration)
+  local max_duration="${1:-600}" # use first arg or default value 600 in seconds
+  echo "RUN: borg check --repository-only --max-duration $max_duration $REPO"
+  borg check --repository-only --max-duration "$max_duration" "$REPO"
+}
+
+
+
+full_check() {
+  echo "RUN: borg full_check"
+  require_cfg
+  # e.g. monthly full check with cryptographic data verification (slow)
+  echo "RUN: borg check --verbose --verify-data $REPO"
+  borg check --verbose --verify-data "$REPO"
+}
+
+
+
+repo_list()  { require_cfg; borg list "--${BORG_LOGLEVEL}" "$REPO"; }
+repo_info()  { require_cfg; borg info "--${BORG_LOGLEVEL}" "$REPO"; }
+
+
+
+mount_repo() {
+  require_cfg
+  local mnt="/tmp/borg_mount"
+  echo "Mounting backups at ${mnt}"
+  mkdir -p "$mnt"
+  borg mount "--${BORG_LOGLEVEL}" "$REPO" "$mnt"
+}
+
+
+
+umount_repo() {
+  local mnt="/tmp/borg_mount"
+  borg umount "--${BORG_LOGLEVEL}" "$mnt" || true
+  rmdir "$mnt" || true
+  echo "Umounted and removed ${mnt}"
+}
+
+
+
+diff_archives() {
+  require_cfg
+  local a1="${1:-}"; local a2="${2:-}"
+  [[ -n "$a1" && -n "$a2" ]] || { echo "Usage: $0 diff <ARCHIVE1> <ARCHIVE2|PATH>" >&2; exit 2; }
+  borg diff "${REPO}::${a1}" "${a2}"
+}
+
+
+
+break_lock() { require_cfg; borg break-lock "$REPO"; }
+
+
+
+usage() { echo "Usage: $0 {backup|list|info|mount|umount|diff|break-lock|compact|prune}"; }
+
+
+
+
+main() {
+  case "${1:-}" in
+    backup) do_backup ;;
+    list) repo_list ;;
+    info) repo_info ;;
+    prune) prune ;;
+    compact) compact ;;
+    mount) mount_repo ;;
+    umount) umount_repo ;;
+    diff) shift; diff_archives "$@" ;;
+    break-lock) break_lock ;;
+    *) usage; exit 2 ;;
+  esac
+}
+main "$@"
