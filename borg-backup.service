@@ -1,0 +1,16 @@
+# /etc/systemd/system/borg-backup.service
+[Unit]
+Description=Borg backup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Environment=HOME=/root
+WorkingDirectory=/root
+SyslogIdentifier=borg-backup
+ExecStart=/opt/borg-backup.sh backup
+
+[Install]
+WantedBy=multi-user.target
