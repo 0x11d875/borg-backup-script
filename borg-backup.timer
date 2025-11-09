@@ -1,0 +1,12 @@
+# /etc/systemd/system/borg-backup.timer
+[Unit]
+Description=Run borg backup once a day, ~5 minutes after boot
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1d
+Persistent=true
+Unit=borg-backup.service
+
+[Install]
+WantedBy=timers.target
